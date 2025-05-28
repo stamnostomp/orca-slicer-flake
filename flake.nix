@@ -15,7 +15,13 @@
     flake-utils.lib.eachDefaultSystem (
       system:
       let
-        pkgs = nixpkgs.legacyPackages.${system};
+        # Configure nixpkgs to allow unfree packages (needed for NVIDIA tools like nvitop, CUDA dependencies)
+        pkgs = import nixpkgs {
+          inherit system;
+          config = {
+            allowUnfree = true;
+          };
+        };
 
         # Create a wrapper that detects NVIDIA and applies proper environment variables
         orca-slicer-nvidia-wayland = pkgs.writeShellScriptBin "orca-slicer" ''
@@ -23,7 +29,7 @@
           if [ -n "$WAYLAND_DISPLAY" ]; then
             echo "Detected Wayland session"
 
-            # Check for NVIDIA GPU
+            # Check for NVIDIA GPU using nvidia-smi or fallback indicators
             if command -v nvidia-smi &> /dev/null && nvidia-smi &> /dev/null; then
               echo "NVIDIA GPU detected, applying Wayland workarounds..."
 
@@ -85,7 +91,7 @@
           paths = [
             orca-slicer-nvidia-wayland
             orca-slicer-desktop
-            pkgs.orca-slicer
+            # Note: pkgs.orca-slicer is called by the wrapper, not included directly to avoid collision
 
             # Required for NVIDIA Wayland support
             pkgs.mesa
@@ -107,12 +113,9 @@
             pkgs.atk
           ];
 
-          # Make sure desktop file is installed
+          # Make sure icons are available if present
           postBuild = ''
-            mkdir -p $out/share/applications
-            cp ${orca-slicer-desktop}/share/applications/* $out/share/applications/
-
-            # Copy icon if available
+            # Copy icon if available from original orca-slicer package
             if [ -d "${pkgs.orca-slicer}/share/icons" ]; then
               mkdir -p $out/share/icons
               cp -r ${pkgs.orca-slicer}/share/icons/* $out/share/icons/
@@ -143,12 +146,14 @@
         devShells.default = pkgs.mkShell {
           buildInputs = with pkgs; [
             orca-slicer-full
+            orca-slicer # Original package available for development
 
             # Development tools
             vulkan-tools
             glxinfo
-            nvidia-gpu-info
-            pciutils
+            nvitop # Interactive NVIDIA GPU process viewer
+            nvtopPackages.full # htop-like GPU monitor for NVIDIA/AMD/Intel
+            pciutils # PCI utilities for lspci
 
             # Debugging tools
             strace
@@ -160,10 +165,19 @@
             echo "Orca Slicer NVIDIA Wayland Development Shell"
             echo "========================================"
             echo ""
+            echo "Note: Unfree packages are enabled for NVIDIA tools (nvitop, CUDA dependencies)"
+            echo ""
+            echo "GPU Monitoring Tools included:"
+            echo "  - nvitop: Interactive NVIDIA GPU viewer with colorful interface"
+            echo "  - nvtop:  htop-like monitor for all GPU types (via nvtopPackages.full)"
+            echo "  - Both provide better alternatives to nvidia-smi"
+            echo ""
             echo "Available commands:"
             echo "  orca-slicer       - Launch Orca Slicer with NVIDIA Wayland support"
             echo "  vulkaninfo        - Show Vulkan info"
             echo "  glxinfo           - Show OpenGL info"
+            echo "  nvitop            - Interactive NVIDIA GPU process viewer"
+            echo "  nvtop             - htop-like GPU monitor (from nvtopPackages.full)"
             echo "  nvidia-smi        - Show NVIDIA GPU info (if available)"
             echo ""
             echo "Environment variables that will be set automatically:"
@@ -171,6 +185,11 @@
             echo "  - NVIDIA GPU detection"
             echo "  - Zink driver configuration"
             echo "  - WebKit DMA-BUF workarounds"
+            echo ""
+            echo "GPU Monitoring Tools included:"
+            echo "  - nvitop: Interactive NVIDIA GPU viewer with colorful interface"
+            echo "  - nvtop:  htop-like monitor for NVIDIA/AMD/Intel GPUs"
+            echo "  - Both provide better alternatives to nvidia-smi"
             echo ""
 
             # Show current environment info
@@ -181,9 +200,11 @@
             fi
 
             if command -v nvidia-smi &> /dev/null; then
-              echo "NVIDIA GPU: Available"
+              echo "NVIDIA GPU: Available (nvidia-smi found)"
+            elif command -v nvitop &> /dev/null; then
+              echo "NVIDIA GPU: Use 'nvitop' or 'nvtop' to check"
             else
-              echo "NVIDIA GPU: Not detected"
+              echo "NVIDIA GPU: Install NVIDIA drivers to check"
             fi
 
             if [ -f "/run/opengl-driver/lib/dri/zink_dri.so" ]; then
