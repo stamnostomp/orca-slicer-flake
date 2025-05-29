@@ -33,24 +33,33 @@
             if command -v nvidia-smi &> /dev/null && nvidia-smi &> /dev/null; then
               echo "NVIDIA GPU detected, applying Wayland workarounds..."
 
-              # Try hardware-accelerated approach first (Zink)
-              if [ -f "/run/opengl-driver/lib/dri/zink_dri.so" ] || [ -f "/usr/lib/dri/zink_dri.so" ]; then
-                echo "Using Zink for hardware acceleration"
-                export __GLX_VENDOR_LIBRARY_NAME=mesa
-                export __EGL_VENDOR_LIBRARY_FILENAMES=/run/opengl-driver/share/glvnd/egl_vendor.d/50_mesa.json
-                export MESA_LOADER_DRIVER_OVERRIDE=zink
-                export GALLIUM_DRIVER=zink
+              # Check for debug/safe mode
+              if [ "$ORCA_SAFE_MODE" = "1" ]; then
+                echo "Safe mode enabled - skipping WebKit modifications"
               else
-                echo "Zink not available, falling back to software rendering"
-                export __EGL_VENDOR_LIBRARY_FILENAMES=/run/opengl-driver/share/glvnd/egl_vendor.d/50_mesa.json
+                # Try hardware-accelerated approach first (Zink)
+                if [ -f "/run/opengl-driver/lib/dri/zink_dri.so" ] || [ -f "/usr/lib/dri/zink_dri.so" ]; then
+                  echo "Using Zink for hardware acceleration"
+                  export __GLX_VENDOR_LIBRARY_NAME=mesa
+                  export __EGL_VENDOR_LIBRARY_FILENAMES=/run/opengl-driver/share/glvnd/egl_vendor.d/50_mesa.json
+                  export MESA_LOADER_DRIVER_OVERRIDE=zink
+                  export GALLIUM_DRIVER=zink
+                else
+                  echo "Zink not available, falling back to software rendering"
+                  export __EGL_VENDOR_LIBRARY_FILENAMES=/run/opengl-driver/share/glvnd/egl_vendor.d/50_mesa.json
+                fi
+
+                # Disable DMA-BUF for WebKit (fixes preview pane but may cause device tab issues)
+                # Only set if not already configured by user
+                if [ -z "$WEBKIT_DISABLE_DMABUF_RENDERER" ]; then
+                  echo "Setting WebKit DMA-BUF workaround (set WEBKIT_DISABLE_DMABUF_RENDERER=0 to disable)"
+                  export WEBKIT_DISABLE_DMABUF_RENDERER=1
+                fi
+
+                # Additional NVIDIA Wayland environment variables
+                export __GL_SYNC_TO_VBLANK=0
+                export __GL_THREADED_OPTIMIZATIONS=1
               fi
-
-              # Disable DMA-BUF for WebKit (fixes preview pane)
-              export WEBKIT_DISABLE_DMABUF_RENDERER=1
-
-              # Additional NVIDIA Wayland environment variables
-              export __GL_SYNC_TO_VBLANK=0
-              export __GL_THREADED_OPTIMIZATIONS=1
 
             else
               echo "No NVIDIA GPU detected"
@@ -106,11 +115,16 @@
             pkgs.glib
             pkgs.gtk3
             pkgs.webkitgtk
+            pkgs.webkitgtk_4_1 # Specific WebKit version needed for web rendering
             pkgs.cairo
             pkgs.pango
             pkgs.harfbuzz
             pkgs.gdk-pixbuf
             pkgs.atk
+
+            # Network and SSL dependencies for web connections (minimal set)
+            pkgs.openssl
+            pkgs.ca-certificates
           ];
 
           # Make sure icons are available if present
@@ -164,6 +178,12 @@
           shellHook = ''
             echo "Orca Slicer NVIDIA Wayland Development Shell"
             echo "========================================"
+            echo ""
+            echo "Troubleshooting:"
+            echo "  - If device tab crashes: WEBKIT_DISABLE_DMABUF_RENDERER=0 nix run ."
+            echo "  - If 3D preview fails: WEBKIT_DISABLE_DMABUF_RENDERER=1 nix run . (default)"
+            echo "  - For safe mode: ORCA_SAFE_MODE=1 nix run ."
+            echo "  - For X11 fallback: GDK_BACKEND=x11 nix run ."
             echo ""
             echo "Note: Unfree packages are enabled for NVIDIA tools (nvitop, CUDA dependencies)"
             echo ""
